@@ -8,9 +8,11 @@ from app.config import Config
 def connect(db_path: str | None = None) -> sqlite3.Connection:
     path = db_path or Config.database()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # 并发收口时让后来者等待而不是立刻抛锁
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -18,6 +20,21 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
 def get_db(db_path: str | None = None):
     conn = connect(db_path)
     try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@contextmanager
+def immediate_tx(db_path: str | None = None):
+    """立即取得写锁的事务：收口全流程在同一事务内一次做完。"""
+    conn = connect(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
         yield conn
         conn.commit()
     except Exception:
@@ -37,6 +54,18 @@ CREATE TABLE IF NOT EXISTS watermark_templates (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS stamp_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  watermark_value TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('半截','已收口')),
+  total_count INTEGER NOT NULL,
+  stamped_count INTEGER NOT NULL DEFAULT 0,
+  strategy TEXT CHECK (strategy IS NULL OR strategy IN ('rollback','retain')),
+  strategy_label TEXT,
+  closed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS run_batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   table_name TEXT NOT NULL,
@@ -45,6 +74,7 @@ CREATE TABLE IF NOT EXISTS run_batches (
   status TEXT NOT NULL CHECK (status IN ('待盖印','已盖印','已作废')),
   watermark_value TEXT,
   stamped_at TEXT,
+  job_id INTEGER REFERENCES stamp_jobs(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -94,6 +124,9 @@ SEED_EDGES = [
 def init_db(db_path: str | None = None) -> None:
     with get_db(db_path) as conn:
         conn.executescript(SCHEMA)
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(run_batches)").fetchall()}
+        if "job_id" not in cols:
+            conn.execute("ALTER TABLE run_batches ADD COLUMN job_id INTEGER")
         row = conn.execute("SELECT value FROM meta WHERE key='seeded'").fetchone()
         if row:
             return

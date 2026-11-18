@@ -7,8 +7,12 @@ from itsdangerous import BadSignature, URLSafeSerializer
 from app.config import Config
 from app.db import init_db
 from app.services import (
+    close_stamp_job,
+    create_interrupted_job,
     get_batch,
+    get_job,
     list_batches,
+    list_jobs,
     list_reports,
     list_templates,
     run_gap_report,
@@ -172,6 +176,64 @@ async def api_stamp(request: Request):
     except ServiceError as exc:
         return json_response({"ok": False, "error": exc.message}, exc.status_code)
     return json_response({"ok": True, "batch": batch})
+
+
+@app.router.get("/api/stamp-jobs")
+async def api_jobs(request: Request):
+    try:
+        require_user(request)
+    except ServiceError as exc:
+        return json_response({"error": exc.message}, exc.status_code)
+    return json_response({"items": list_jobs()})
+
+
+@app.router.get("/api/stamp-jobs/{job_id}")
+async def api_job_detail(request: Request):
+    try:
+        require_user(request)
+        job_id = int(request.route_values["job_id"])
+        job = get_job(job_id)
+        if not job:
+            return json_response({"error": "盖印作业不存在"}, 404)
+    except ServiceError as exc:
+        return json_response({"error": exc.message}, exc.status_code)
+    return json_response({"job": job})
+
+
+@app.router.post("/api/stamp-jobs")
+async def api_job_create(request: Request):
+    try:
+        require_user(request)
+        body = await request.json()
+        raw_ids = body.get("batch_ids") or []
+        batch_ids = [int(i) for i in raw_ids]
+        interrupt_after = body.get("interrupt_after")
+        job = create_interrupted_job(
+            batch_ids,
+            str(body.get("watermark_value", "")),
+            interrupt_after=int(interrupt_after) if interrupt_after is not None else None,
+        )
+    except ServiceError as exc:
+        return json_response({"ok": False, "error": exc.message}, exc.status_code)
+    except (TypeError, ValueError):
+        return json_response({"ok": False, "error": "批次编号格式不正确"}, 400)
+    return json_response({"ok": True, "job": job})
+
+
+@app.router.post("/api/stamp-jobs/{job_id}/close")
+async def api_job_close(request: Request):
+    try:
+        require_user(request)
+        job_id = int(request.route_values["job_id"])
+        body = await request.json()
+        job = close_stamp_job(
+            job_id,
+            str(body.get("strategy", "")),
+            str(body.get("watermark_value", "")) or None,
+        )
+    except ServiceError as exc:
+        return json_response({"ok": False, "error": exc.message}, exc.status_code)
+    return json_response({"ok": True, "job": job})
 
 
 @app.router.post("/api/trace")

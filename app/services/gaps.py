@@ -32,4 +32,11 @@ def run_gap_report(as_of_date: str, db_path: str | None = None) -> dict:
         row = conn.execute(
             "SELECT * FROM gap_reports WHERE id=?", (cur.lastrowid,)
         ).fetchone()
-        return dict(row)
+        report = dict(row)
+        # 复跑台顺带亮出尚未收口的半截作业
+        open_jobs = conn.execute(
+            "SELECT * FROM stamp_jobs WHERE status='半截' ORDER BY id"
+        ).fetchall()
+        report["open_jobs"] = [dict(j) for j in open_jobs]
+        report["consistent"] = expected == stamped + gap
+        return report

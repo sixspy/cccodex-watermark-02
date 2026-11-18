@@ -99,3 +99,23 @@ th { color: var(--muted); font-weight: 500; }
   border: 1px dashed var(--line);
   border-radius: 14px;
 }
+.job-card {
+  margin-top: 0.9rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+.job-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.close-card { background: #f3f7ee; }
+.chip-half { background: #fde9c8; color: #7a4b12; }
+.chip-rollback { background: #f6d6d2; color: #8a2a1e; }
+.chip-retain { background: #d7f0c2; color: #2c5310; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+input[type="checkbox"] { width: auto; }
